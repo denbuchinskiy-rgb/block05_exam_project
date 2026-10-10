@@ -117,141 +117,122 @@
 
 from IPython.display import display
 
+from pathlib import Path
+ 
 from src.config import (
-    CATEGORICAL_COLUMN,
+    CATEGORICAL_FEATURES,
     CHARTS_DIR,
-    CLEAN_DATA_PATH,
-    CORRELATION_PATH,
-    FINAL_REPORT_PATH,
-    GROUP_REPORT_PATH,
-    ML_DATA_DIR,
+    NUMERIC_FEATURES,
+    PROCESSED_DIR,
+    RANDOM_STATE,
+    RAW_COLUMNS,
     RAW_DATA_PATH,
-    REQUIRED_COLUMNS,
     REPORTS_DIR,
+    SHEET_NAME,
     TARGET_COLUMN,
     TEST_SIZE,
-    RANDOM_STATE,
 )
-from src.data_loader import DataLoader
-from src.data_cleaner import DataCleaner
-from src.data_analyzer import DataAnalyzer
-from src.ml_preparer import MLDatasetPreparer
-from src.visualizer import Visualizer
-from src.report_builder import ReportBuilder
-
-
-def main() -> None:
-    """Запуск полного сценария."""
-
-    # 1. Папки.
+from src.data_loader import load_sales_data, validate_columns
+from src.evaluation import calculate_regression_metrics, print_metrics
+from src.features import prepare_sales_features
+from src.modeling import build_regression_pipeline, split_data
+from src.reporting import save_markdown_report
+from src.visualization import (
+    build_predictions_dataframe,
+    save_error_histogram,
+    save_fact_prediction_plot,
+)
+ 
+ 
+def main():
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     CHARTS_DIR.mkdir(parents=True, exist_ok=True)
-    ML_DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-    # 2. Загрузка.
-    print("1. Загрузка данных...")
-    loader = DataLoader(raw_path=RAW_DATA_PATH)
-    df_raw = loader.load()
-    print("Исходный размер таблицы:", df_raw.shape)
-    display(df_raw.head())
-    # 3. Очистка.
-    print("2. Очистка данных...")
-    cleaner = DataCleaner(df_raw)
-    df_clean = cleaner.clean(required_columns=REQUIRED_COLUMNS)
-    loader.save_dataframe(df_clean, CLEAN_DATA_PATH)
-    print("Размер после очистки:", df_clean.shape)
-    # 4. Анализ.
-    print("3. Анализ данных...")
-    analyzer = DataAnalyzer(df_clean)
-
-    basic_info = analyzer.basic_info()
-
-    if TARGET_COLUMN not in df_clean.columns:
-        raise ValueError(f"Колонка '{TARGET_COLUMN}' не найдена.")
-
-    target_stats = analyzer.numeric_statistics(TARGET_COLUMN)
-    group_report = analyzer.group_report(CATEGORICAL_COLUMN, TARGET_COLUMN)
-    correlation = analyzer.correlation_with_target(TARGET_COLUMN)
-
-    group_report.to_csv(GROUP_REPORT_PATH)
-    correlation.to_csv(CORRELATION_PATH)
-
-    print("Статистика по цене:", target_stats)
-    print("Отчёт по группам:")
-    print(group_report)
-
-    # 5. Графики.
-    print("4. Сохранение графиков...")
-    visualizer = Visualizer(CHARTS_DIR)
-
-    visualizer.save_histogram(
-        dataframe=df_clean,
-        column=TARGET_COLUMN,
-        filename="price_histogram.png",
-        title=f"Распределение {TARGET_COLUMN}",
-    )
-
-    visualizer.save_scatter(
-        dataframe=df_clean,
-        x_column="quantity",
-        y_column=TARGET_COLUMN,
-        filename="quantity_vs_price.png",
-        title="Зависимость цены от количества",
-    )
-
-    visualizer.save_group_bar(
-        group_report=group_report,
-        value_column="mean",
-        filename="price_by_category.png",
-        title="Средняя цена по категориям",
-    )
-
-    # 6. Подготовка ML.
-    print("5. Подготовка ML-датасета...")
-    ml_preparer = MLDatasetPreparer(
-        dataframe=df_clean,
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+ 
+    print("1. Загрузка данных")
+    df = load_sales_data(RAW_DATA_PATH, sheet_name=SHEET_NAME)
+    validate_columns(df, RAW_COLUMNS)
+    print("Размер исходных данных:", df.shape)
+ 
+    print("2. Подготовка признаков")
+    X, y, prepared_data = prepare_sales_features(
+        df,
         target_column=TARGET_COLUMN,
-        categorical_column=CATEGORICAL_COLUMN,
+    )
+ 
+    prepared_data.to_csv(
+        PROCESSED_DIR / "prepared_sales_data.csv",
+        index=False,
+    )
+ 
+    print("X:", X.shape)
+    print("y:", y.shape)
+ 
+    print("3. Train/test split")
+    X_train, X_test, y_train, y_test = split_data(
+        X,
+        y,
+        test_size=TEST_SIZE,
         random_state=RANDOM_STATE,
     )
-
-    X_train, X_test, y_train, y_test = ml_preparer.prepare(
-        test_size=TEST_SIZE,
-        scale=True,
+ 
+    print("X_train:", X_train.shape)
+    print("X_test:", X_test.shape)
+ 
+    print("4. Обучение модели")
+    model = build_regression_pipeline(
+        numeric_features=NUMERIC_FEATURES,
+        categorical_features=CATEGORICAL_FEATURES,
+        model_type="linear",
+        random_state=RANDOM_STATE,
     )
-
-    ml_preparer.save_prepared_data(
-        X_train=X_train,
-        X_test=X_test,
-        y_train=y_train,
-        y_test=y_test,
-        output_dir=ML_DATA_DIR,
+ 
+    model.fit(X_train, y_train)
+ 
+    print("5. Прогноз")
+    predictions = model.predict(X_test)
+ 
+    print("Первые 5 прогнозов:")
+    print(predictions[:5])
+ 
+    print("6. Метрики")
+    metrics = calculate_regression_metrics(y_test, predictions)
+    print_metrics(metrics)
+ 
+    print("7. Отчёты и графики")
+    predictions_df = build_predictions_dataframe(
+        y_true=y_test.reset_index(drop=True),
+        y_pred=predictions,
     )
-
-    ml_shapes = {
-        "X_train": X_train.shape,
-        "X_test": X_test.shape,
-        "y_train": len(y_train),
-        "y_test": len(y_test),
-    }
-    print("Размеры ML-выборок:", ml_shapes)
-
-    # 7. Отчёт.
-    print("6. Формирование отчёта...")
-    report_builder = ReportBuilder(FINAL_REPORT_PATH)
-
-    report_text = report_builder.build_report(
-        basic_info=basic_info,
-        target_stats=target_stats,
-        group_report=group_report,
-        correlation=correlation,
-        ml_shapes=ml_shapes,
+ 
+    predictions_df.to_csv(
+        REPORTS_DIR / "predictions.csv",
+        index=False,
     )
-    report_builder.save(report_text)
-
-    print("Готово.")
-    print("Итоговый отчёт:", FINAL_REPORT_PATH)
-
-
+ 
+    save_fact_prediction_plot(
+        y_true=predictions_df["y_true"],
+        y_pred=predictions_df["y_pred"],
+        output_path=CHARTS_DIR / "fact_vs_prediction.png",
+    )
+ 
+    save_error_histogram(
+        errors=predictions_df["error"],
+        output_path=CHARTS_DIR / "error_histogram.png",
+    )
+ 
+    save_markdown_report(
+        output_path=REPORTS_DIR / "final_report.md",
+        metrics=metrics,
+        model_name="LinearRegression with preprocessing Pipeline",
+        target_column=TARGET_COLUMN,
+        numeric_features=NUMERIC_FEATURES,
+        categorical_features=CATEGORICAL_FEATURES,
+    )
+ 
+    print("Проект выполнен.")
+    print("Итоговый отчёт:", REPORTS_DIR / "final_report.md")
+ 
+ 
 if __name__ == "__main__":
     main()
