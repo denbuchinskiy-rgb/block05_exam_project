@@ -1,98 +1,92 @@
-"""Data loading module.
- 
-Этот модуль отвечает только за загрузку и сохранение данных.
-Такой подход делает проект понятным: загрузка не смешивается с очисткой,
-анализом, графиками и подготовкой к машинному обучению.
+"""Модуль загрузки данных.
+
+Отвечает только за загрузку и сохранение CSV.
 """
- 
+
 from __future__ import annotations
- 
+
 from pathlib import Path
- 
+
 import numpy as np
 import pandas as pd
- 
- 
+
+
 class DataLoader:
-    """Класс для загрузки CSV-датасета.
- 
-    Класс хранит путь к файлу и ссылку на внешний источник.
-    Метод load() возвращает pandas DataFrame.
-    """
- 
-    def __init__(self, raw_path: Path, url: str):
+    """Класс для загрузки CSV-датасета продаж."""
+
+    def __init__(self, raw_path: Path):
         self.raw_path = Path(raw_path)
-        self.url = url
- 
+
     def load(self) -> pd.DataFrame:
         """Загрузить датасет.
- 
-        Алгоритм:
-        1. Если файл уже есть в data/housing.csv, читаем его.
-        2. Если файла нет, пробуем скачать CSV по URL.
-        3. Если интернет недоступен, создаём учебный fallback-датасет.
+
+        1. Если файл есть — читаем.
+        2. Если нет — генерируем демо-датасет и сохраняем.
         """
         self.raw_path.parent.mkdir(parents=True, exist_ok=True)
- 
+        print(self.raw_path)
         if self.raw_path.exists():
-            return pd.read_csv(self.raw_path)
- 
-        try:
-            data = pd.read_csv(self.url)
-            data.to_csv(self.raw_path, index=False)
-            return data
-        except Exception:
-            data = self.create_demo_housing_dataset()
-            data.to_csv(self.raw_path, index=False)
-            return data
- 
+            return pd.read_csv(
+                self.raw_path,
+                sep=';',
+                decimal=',',
+                thousands='.',
+                engine='python',
+            )
+
+        data = self.create_demo_sales_dataset()
+        data.to_csv(self.raw_path, index=False, sep=';')
+        return data
+
     def save_dataframe(self, dataframe: pd.DataFrame, path: Path) -> None:
         """Сохранить DataFrame в CSV."""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         dataframe.to_csv(path, index=False)
- 
+
     @staticmethod
-    def create_demo_housing_dataset(rows: int = 2000, seed: int = 42) -> pd.DataFrame:
-        """Создать учебный датасет, похожий по колонкам на California Housing.
- 
-        Это запасной вариант для учебной аудитории, если интернет не работает.
-        Для экзамена желательно использовать реальный CSV из URL.
+    def create_demo_sales_dataset(rows: int = 2000, seed: int = 42) -> pd.DataFrame:
+        """Учебный датасет продаж.
+
+        Колонки: number, manager, city, category, product,
+        quantity, price, discount.
         """
         rng = np.random.default_rng(seed)
- 
+
         category_values = ["Одежда", "Книги", "Дом и сад", "Продукты"]
-        category = rng.choice(
-            category_values,
-            size=rows,
-            p=[0.42, 0.34, 0.12, 0.12],
-        )
- 
+        category = rng.choice(category_values, size=rows, p=[0.42, 0.34, 0.12, 0.12])
+
+        manager_values = ["Иванов", "Петров", "Сидоров", "Кузнецова"]
+        manager = rng.choice(manager_values, size=rows)
+
+        city_values = ["Москва", "Санкт-Петербург", "Казань", "Новосибирск"]
+        city = rng.choice(city_values, size=rows)
+
+        product_values = ["Футболка", "Роман", "Лампа", "Молоко", "Куртка", "Учебник"]
+        product = rng.choice(product_values, size=rows)
+
         quantity = rng.gamma(shape=4.0, scale=1.2, size=rows)
         quantity = np.clip(quantity, 0.5, 15.0)
- 
-        discount = rng.integers(80, 2500, size=rows)
-        price = discount * rng.normal(2.8, 0.6, size=rows)
-        price = np.clip(price, 100, 12000).astype(int)
- 
-        # Добавим немного пропусков, чтобы было что очищать.
+
+        discount = rng.integers(0, 30, size=rows)          # процент скидки
+        price = rng.integers(100, 12000, size=rows)        # цена единицы товара
+
+        # Немного пропусков в quantity, чтобы было что очищать.
         missing_mask = rng.random(rows) < 0.04
-        product = product.astype(float)
-        product[missing_mask] = np.nan
- 
-        bonus = np.where(category == "Электроника", -45000, 35000)
-        house_value = (
-            50000
-            + quantity * 42000
-            + bonus
-            + rng.normal(0, 35000, size=rows)
-        )
-        house_value = np.clip(house_value, 35000, 500001)
- 
+        quantity = quantity.astype(float)
+        quantity[missing_mask] = np.nan
+
+        number = np.arange(1, rows + 1)
+
         return pd.DataFrame(
             {
-                "category": category, 
-                "product": product, 
-                "quantity": pd.array(quantity, dtype="Int64"), # Int64 поддерживает пропуски (pd.NA) "price": price, "discount": discount,
+                "number": number,
+                "manager": manager,
+                "city": city,
+                "category": category,
+                "product": product,
+                "quantity": quantity,
+                "price": price,
+                "discount": discount,
             }
         )
